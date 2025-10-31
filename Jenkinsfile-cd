@@ -1,0 +1,94 @@
+pipeline {
+    agent {
+        docker {
+            image 'google/cloud-sdk:latest'
+            args '-v /var/run/docker.sock:/var/run/docker.sock'
+        }
+    }
+    
+    parameters {
+        string(name: 'DOCKER_IMAGE', defaultValue: 'chouleang/podinfo')
+        string(name: 'IMAGE_TAG', defaultValue: 'latest')
+        string(name: 'NAMESPACE', defaultValue: 'podinfo')
+    }
+    
+    environment {
+        GKE_CLUSTER = "go-hello-cluster"
+        GKE_ZONE = "asia-southeast1-a"
+        PROJECT_ID = "it-enviroment"
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                sh '''
+                    echo "📦 Setting up workspace..."
+                    if [ -d ".git" ]; then
+                        echo "📥 Updating existing repository..."
+                        git pull origin main
+                    else
+                        echo "📥 Cloning repository..."
+                        git clone https://github.com/chouleang/podinfo-gke.git .
+                    fi
+                    echo "📦 Commit: $(git log --oneline -n 1)"
+                '''
+            }
+        }
+
+        stage('Deploy to GKE') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'gcp-service-account', variable: 'GCP_CREDENTIALS')]) {
+                        sh """
+                            echo "🚀 Deploying ${params.DOCKER_IMAGE}:${params.IMAGE_TAG} to GKE..."
+                            
+                            # Set writable config directories for both gcloud and kubectl
+                            export CLOUDSDK_CONFIG=/tmp/gcloud-config
+                            export KUBECONFIG=/tmp/kube-config
+                            mkdir -p \$CLOUDSDK_CONFIG
+                            mkdir -p \$(dirname \$KUBECONFIG)
+                            
+                            echo "🔑 Authenticating to GCP..."
+                            gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
+                            
+                            echo "🔗 Connecting to GKE cluster..."
+                            gcloud container clusters get-credentials ${GKE_CLUSTER} --zone ${GKE_ZONE} --project ${PROJECT_ID}
+                            
+                            echo "📁 Creating namespace..."
+                            kubectl create namespace ${params.NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                            
+                            echo "📄 Applying Kubernetes manifests..."
+                            kubectl apply -f . -n ${params.NAMESPACE}
+                            
+                            echo "🔄 Updating deployment image..."
+                            kubectl set image deployment/podinfo podinfo=${params.DOCKER_IMAGE}:${params.IMAGE_TAG} -n ${params.NAMESPACE} --record
+                            
+                            echo "⏳ Waiting for rollout..."
+                            kubectl rollout status deployment/podinfo -n ${params.NAMESPACE} --timeout=300s
+                            
+                            echo "✅ Deployment completed!"
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            sh '''
+                echo "🧹 Cleaning up container workspace..."
+                rm -rf /tmp/gcloud-config
+                rm -rf /tmp/kube-config
+            '''
+        }
+        success {
+            echo "🎉 CD Pipeline SUCCESS!"
+            echo "📦 Deployed: ${params.DOCKER_IMAGE}:${params.IMAGE_TAG}"
+            echo "🏷️ Namespace: ${params.NAMESPACE}"
+        }
+        failure {
+            echo "❌ CD Pipeline FAILED"
+        }
+    }
+}
