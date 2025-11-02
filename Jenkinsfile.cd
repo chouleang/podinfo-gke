@@ -26,7 +26,7 @@ pipeline {
             steps {
                 sh '''
                     echo "📥 Cloning deployment repository..."
-                    git clone -b ${GIT_BRANCH} ${GIT_REPO} deployment-repo
+                    git clone ${GIT_REPO} deployment-repo
                     cd deployment-repo
                     echo "📦 Repository content:"
                     ls -la
