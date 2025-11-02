@@ -5,75 +5,87 @@ pipeline {
             args '-v /var/run/docker.sock:/var/run/docker.sock'
         }
     }
-    
+
     parameters {
         string(name: 'DOCKER_IMAGE', defaultValue: 'chouleang/podinfo')
         string(name: 'IMAGE_TAG', defaultValue: 'latest')
         string(name: 'NAMESPACE', defaultValue: 'podinfo')
-        }
+    }
 
     environment {
         GKE_CLUSTER = "go-hello-cluster"
         GKE_ZONE = "asia-southeast1-a"
         PROJECT_ID = "it-enviroment"
     }
-    
+
     stages {
+
+        stage('Prepare Environment') {
+            steps {
+                sh '''
+                    apt-get update -qq
+                    apt-get install -y -qq bash curl jq
+                    echo "✅ Bash installed successfully."
+                '''
+            }
+        }
+
         stage('Checkout') {
-    steps {
-        sh '''
-            set -euxo pipefail
-            echo "📦 Setting up workspace..."
+            steps {
+                sh '''
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    echo "📦 Setting up workspace..."
 
-            if [ -d "deployment-repo/.git" ]; then
-                echo "📥 Updating existing repository in deployment-repo..."
-                cd deployment-repo
-                git fetch origin main
-                git reset --hard origin/main
-            else
-                echo "📥 Cloning repository into deployment-repo..."
-                rm -rf deployment-repo
-                git clone https://github.com/chouleang/podinfo-gke.git deployment-repo
-            fi
+                    if [ -d "deployment-repo/.git" ]; then
+                        echo "📥 Updating existing repository in deployment-repo..."
+                        cd deployment-repo
+                        git fetch origin main
+                        git reset --hard origin/main
+                    else
+                        echo "📥 Cloning repository into deployment-repo..."
+                        rm -rf deployment-repo
+                        git clone https://github.com/chouleang/podinfo-gke.git deployment-repo
+                    fi
 
-            echo "📦 Latest commit:"
-            cd deployment-repo
-            git log --oneline -n 1 || echo "⚠️ No commits found yet."
-        '''
-    }
-}
-
+                    echo "📦 Latest commit:"
+                    cd deployment-repo
+                    git log --oneline -n 1 || echo "⚠️ No commits found yet."
+                '''
+            }
+        }
 
         stage('Verify Cluster') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'gcp-service-account', variable: 'GCP_CREDENTIALS')]) {
-                        sh """
+                        sh '''#!/usr/bin/env bash
+                            set -euo pipefail
                             export CLOUDSDK_CONFIG=/tmp/gcloud-config
-                            mkdir -p \$CLOUDSDK_CONFIG
-                            
-                            gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
-                            
+                            mkdir -p "$CLOUDSDK_CONFIG"
+
+                            gcloud auth activate-service-account --key-file="${GCP_CREDENTIALS}"
+
                             echo "🔍 Checking cluster status..."
-                            NODE_COUNT=\$(gcloud container clusters describe ${GKE_CLUSTER} \
+                            NODE_COUNT=$(gcloud container clusters describe ${GKE_CLUSTER} \
                                 --zone ${GKE_ZONE} \
                                 --project ${PROJECT_ID} \
                                 --format="value(currentNodeCount)" 2>/dev/null || echo "0")
-                            
-                            echo "Current node count: \$NODE_COUNT"
-                            
-                            if [ "\$NODE_COUNT" -eq "0" ]; then
+
+                            echo "Current node count: $NODE_COUNT"
+
+                            if [ "$NODE_COUNT" -eq "0" ]; then
                                 echo "⚠️  Cluster has 0 nodes! Resizing to 1 node..."
                                 gcloud container clusters resize ${GKE_CLUSTER} \
                                     --zone ${GKE_ZONE} \
                                     --num-nodes=1 \
                                     --project ${PROJECT_ID} \
                                     --quiet
-                                
+
                                 echo "⏳ Waiting 2 minutes for node to be ready..."
                                 sleep 120
                             fi
-                        """
+                        '''
                     }
                 }
             }
@@ -83,105 +95,100 @@ pipeline {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'gcp-service-account', variable: 'GCP_CREDENTIALS')]) {
-                        sh """
+                        sh '''#!/usr/bin/env bash
+                            set -euo pipefail
                             export CLOUDSDK_CONFIG=/tmp/gcloud-config
                             export KUBECONFIG=/tmp/kube-config
-                            mkdir -p \$CLOUDSDK_CONFIG
-                            mkdir -p \$(dirname \$KUBECONFIG)
-                            
+                            mkdir -p "$CLOUDSDK_CONFIG" "$(dirname "$KUBECONFIG")"
+
                             cd deployment-repo/
-                            
+
                             echo "📄 Kubernetes manifests to deploy:"
                             ls -la *.yaml *.yml 2>/dev/null || echo "No YAML files found"
-                            
-                            gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
-                            gcloud container clusters get-credentials ${GKE_CLUSTER} --zone ${GKE_ZONE} --project ${PROJECT_ID}
-                            
+
+                            gcloud auth activate-service-account --key-file="${GCP_CREDENTIALS}"
+                            gcloud container clusters get-credentials ${GKE_CLUSTER} \
+                                --zone ${GKE_ZONE} --project ${PROJECT_ID}
+
                             echo "🏗️ Creating namespace if needed..."
                             kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                            
+
                             echo "🚀 Applying Kubernetes manifests..."
                             kubectl apply -f . -n ${NAMESPACE}
-                            
+
                             echo "🔄 Updating deployment image to ${DOCKER_IMAGE}:${IMAGE_TAG}..."
                             kubectl set image deployment/podinfo podinfo=${DOCKER_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}
-                            
+
                             echo "⏳ Waiting for rollout (timeout: 600s)..."
                             kubectl rollout status deployment/podinfo -n ${NAMESPACE} --timeout=600s
-                            
+
                             echo "✅ Deployment completed!"
-                        """
+                        '''
                     }
                 }
             }
         }
-        
+
         stage('Verify Deployment') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'gcp-service-account', variable: 'GCP_CREDENTIALS')]) {
-                        sh """
+                        sh '''#!/usr/bin/env bash
+                            set -euo pipefail
                             export CLOUDSDK_CONFIG=/tmp/gcloud-config
                             export KUBECONFIG=/tmp/kube-config
-                            
-                            gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
+
+                            gcloud auth activate-service-account --key-file="${GCP_CREDENTIALS}"
                             gcloud container clusters get-credentials ${GKE_CLUSTER} --zone ${GKE_ZONE} --project ${PROJECT_ID}
-                            
+
                             echo "🔍 Verifying deployment..."
                             kubectl get all -n ${NAMESPACE}
-                            
+
                             echo "📊 Pod status:"
                             kubectl get pods -n ${NAMESPACE} -o wide
-                            
-                            # Get service IP for testing
-                            SERVICE_IP=\$(kubectl get service podinfo -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
-                            if [ -n "\$SERVICE_IP" ]; then
-                                echo "🌐 Service URL: http://\${SERVICE_IP}"
-                                echo "🧪 Testing endpoints..."
-                                #timeout 60 bash -c 'until curl -sf http://\${SERVICE_IP}/healthz >/dev/null; do sleep 5; done' && echo "✅ Health check passed"
+
+                            SERVICE_IP=$(kubectl get service podinfo -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+                            if [ -n "$SERVICE_IP" ]; then
+                                echo "🌐 Service URL: http://${SERVICE_IP}"
                             else
                                 echo "ℹ️  Service IP not available yet"
                             fi
-                        """
+                        '''
                     }
                 }
             }
         }
     }
-    
+
     post {
         always {
             sh '''
                 echo "🧹 Cleaning up..."
-                rm -rf /tmp/gcloud-config /tmp/kube-config
-                rm -rf deployment-repo
+                rm -rf /tmp/gcloud-config /tmp/kube-config deployment-repo || true
             '''
-            cleanWs(
-                deleteDirs: true,
-                notFailBuild: true
-            )
+            cleanWs(deleteDirs: true, notFailBuild: true)
         }
         success {
             echo "🎉 CD Pipeline SUCCESS!"
             echo "📦 Deployed: ${DOCKER_IMAGE}:${IMAGE_TAG}"
             echo "🏷️ Namespace: ${NAMESPACE}"
-            echo "📚 Source: ${GIT_REPO}#${GIT_BRANCH}"
         }
         failure {
             echo "❌ CD Pipeline FAILED"
             script {
                 withCredentials([file(credentialsId: 'gcp-service-account', variable: 'GCP_CREDENTIALS')]) {
-                    sh """
+                    sh '''#!/usr/bin/env bash
+                        set -euo pipefail
                         export CLOUDSDK_CONFIG=/tmp/gcloud-config
                         export KUBECONFIG=/tmp/kube-config
-                        
-                        gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
+
+                        gcloud auth activate-service-account --key-file="${GCP_CREDENTIALS}"
                         gcloud container clusters get-credentials ${GKE_CLUSTER} --zone ${GKE_ZONE} --project ${PROJECT_ID}
-                        
+
                         echo "🔍 Debugging failed deployment..."
                         kubectl get events -n ${NAMESPACE} --sort-by='.lastTimestamp' | tail -20
                         kubectl describe deployment podinfo -n ${NAMESPACE} || true
-                    """
+                    '''
                 }
             }
         }
