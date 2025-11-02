@@ -10,11 +10,8 @@ pipeline {
         string(name: 'DOCKER_IMAGE', defaultValue: 'chouleang/podinfo')
         string(name: 'IMAGE_TAG', defaultValue: 'latest')
         string(name: 'NAMESPACE', defaultValue: 'podinfo')
-        string(name: 'GIT_REPO', defaultValue: 'https://github.com/chouleang/podinfo-gke.git')
-        string(name: 'GIT_BRANCH', defaultValue: 'main')
-        string(name: 'MANIFESTS_PATH', defaultValue: '.')  // Path to YAML files in repo
-    }
-    
+        }
+
     environment {
         GKE_CLUSTER = "go-hello-cluster"
         GKE_ZONE = "asia-southeast1-a"
@@ -24,10 +21,10 @@ pipeline {
     stages {
         stage('Clone Repository') {
             steps {
+                checkout scm
                 sh '''
                     echo "📥 Cloning deployment repository..."
-                    git clone ${GIT_REPO} deployment-repo
-                    cd deployment-repo
+                    mv podinfo-gke deployment-repo
                     echo "📦 Repository content:"
                     ls -la
                     echo "📄 YAML files:"
@@ -81,7 +78,7 @@ pipeline {
                             mkdir -p \$CLOUDSDK_CONFIG
                             mkdir -p \$(dirname \$KUBECONFIG)
                             
-                            cd deployment-repo/${MANIFESTS_PATH}
+                            cd deployment-repo/
                             
                             echo "📄 Kubernetes manifests to deploy:"
                             ls -la *.yaml *.yml 2>/dev/null || echo "No YAML files found"
@@ -148,6 +145,10 @@ pipeline {
                 rm -rf /tmp/gcloud-config /tmp/kube-config
                 rm -rf deployment-repo
             '''
+            cleanWs(
+                deleteDirs: true,
+                notFailBuild: true
+            )
         }
         success {
             echo "🎉 CD Pipeline SUCCESS!"
