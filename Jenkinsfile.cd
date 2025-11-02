@@ -20,20 +20,29 @@ pipeline {
     
     stages {
         stage('Checkout') {
-            steps {
-                sh '''
-                    echo "📦 Setting up workspace..."
-                    if [ -d ".git" ]; then
-                        echo "📥 Updating existing repository..."
-                        git pull origin main
-                    else
-                        echo "📥 Cloning repository..."
-                        git clone https://github.com/chouleang/podinfo-gke.git deployment-repo
-                    fi
-                    echo "📦 Commit: $(git log --oneline -n 1)"
-                '''
-            }
-        }
+    steps {
+        sh '''
+            set -euxo pipefail
+            echo "📦 Setting up workspace..."
+
+            if [ -d "deployment-repo/.git" ]; then
+                echo "📥 Updating existing repository in deployment-repo..."
+                cd deployment-repo
+                git fetch origin main
+                git reset --hard origin/main
+            else
+                echo "📥 Cloning repository into deployment-repo..."
+                rm -rf deployment-repo
+                git clone https://github.com/chouleang/podinfo-gke.git deployment-repo
+            fi
+
+            echo "📦 Latest commit:"
+            cd deployment-repo
+            git log --oneline -n 1 || echo "⚠️ No commits found yet."
+        '''
+    }
+}
+
 
         stage('Verify Cluster') {
             steps {
