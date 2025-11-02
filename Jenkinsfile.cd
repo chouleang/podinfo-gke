@@ -19,16 +19,18 @@ pipeline {
     }
     
     stages {
-        stage('Clone Repository') {
+        stage('Checkout') {
             steps {
-                checkout scm
                 sh '''
-                    echo "📥 Cloning deployment repository..."
-                    mv podinfo-gke deployment-repo
-                    echo "📦 Repository content:"
-                    ls -la
-                    echo "📄 YAML files:"
-                    find . -name "*.yaml" -o -name "*.yml" | head -10
+                    echo "📦 Setting up workspace..."
+                    if [ -d ".git" ]; then
+                        echo "📥 Updating existing repository..."
+                        git pull origin main
+                    else
+                        echo "📥 Cloning repository..."
+                        git clone https://github.com/chouleang/podinfo-gke.git deployment-repo
+                    fi
+                    echo "📦 Commit: $(git log --oneline -n 1)"
                 '''
             }
         }
