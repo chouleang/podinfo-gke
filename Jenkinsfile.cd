@@ -128,9 +128,9 @@ pipeline {
                             # Get service IP for testing
                             SERVICE_IP=\$(kubectl get service podinfo -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
                             if [ -n "\$SERVICE_IP" ]; then
-                                echo "🌐 Service URL: http://\${SERVICE_IP}:9898"
+                                echo "🌐 Service URL: http://\${SERVICE_IP}"
                                 echo "🧪 Testing endpoints..."
-                                timeout 60 bash -c 'until curl -sf http://\${SERVICE_IP}:9898/healthz >/dev/null; do sleep 5; done' && echo "✅ Health check passed"
+                                timeout 60 bash -c 'until curl -sf http://\${SERVICE_IP}/healthz >/dev/null; do sleep 5; done' && echo "✅ Health check passed"
                             else
                                 echo "ℹ️  Service IP not available yet"
                             fi
